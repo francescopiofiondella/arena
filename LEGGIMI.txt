@@ -1,0 +1,11 @@
+ARENA DI TIRO
+
+1. Estrai TUTTA la cartella dallo zip (non aprire index.html dentro lo zip).
+2. Windows: doppio clic su AVVIA.bat. Si apre il browser su http://localhost:8000
+   (serve Python: python.org. Alternativa: VS Code + estensione "Live Server", tasto destro su index.html > Open with Live Server)
+   Mac/Linux: ./AVVIA.sh
+3. Serve internet (la libreria three.js viene da una CDN).
+4. Clicca "Gioca da PC".
+5. Visore collegato al PC (Link/Air Link/SteamVR): apri la stessa pagina localhost in Chrome o Edge e premi "Entra in VR".
+   Visore da solo (Quest): serve un indirizzo https, vedi note nella chat.
+Non chiudere la finestra nera finche' giochi: e' il server.
