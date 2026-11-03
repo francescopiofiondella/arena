@@ -114,8 +114,10 @@ h1{font:700 clamp(48px,9vw,84px)/.9 var(--f-display);text-transform:uppercase;le
         <dt>WASD</dt><dd>muoviti</dd><dt>Shift</dt><dd>corri</dd><dt>Mouse</dt><dd>mira</dd>
         <dt>Click</dt><dd>spara</dd><dt>Destro</dt><dd>zoom</dd><dt>R</dt><dd>ricarica</dd><dt>1 2 3</dt><dd>ARX-160, GM6 Lynx, M4</dd><dt>Esc</dt><dd>menu</dd></dl></div>
       <div><h2>Visore</h2><dl>
-        <dt>Stick sx</dt><dd>muoviti</dd><dt>Stick dx</dt><dd>ruota di 30°</dd><dt>Grilletto</dt><dd>spara</dd>
-        <dt>A / X</dt><dd>ricarica</dd><dt>Grip / B</dt><dd>cambia arma</dd><dt>Polso sx</dt><dd>salute e munizioni</dd></dl></div>
+        <dt>Stick sx</dt><dd>muoviti</dd><dt>Stick dx</dt><dd>ruota di 30°</dd><dt>Grilletto dx</dt><dd>spara</dd>
+        <dt>Grilletto sx</dt><dd>tieni premuto per mirare</dd><dt>Click stick dx</dt><dd>mira fissa on/off</dd>
+        <dt>Grip sx</dt><dd>impugna con due mani (mano vicino alla canna)</dd>
+        <dt>A / X</dt><dd>ricarica</dd><dt>Grip dx / B</dt><dd>cambia arma</dd><dt>Orologio</dt><dd>salute e munizioni sul polso sinistro</dd></dl></div>
     </div>
   </div>
 </div>
@@ -372,8 +374,9 @@ function buildWeapons() {
 
   for (const w of W) {
     vmRoot.add(w.desk); vrHolder.add(w.vr);
-    const l = laser(); l.position.copy(w.muzV); w.vr.add(l);
+    const l = laser(); l.position.copy(w.muzV); w.vr.add(l); w.laser = l;
   }
+  W[0].fore = V3(0, .05, -.17); W[1].fore = V3(0, .06, -.36); W[2].fore = V3(0, .05, W[2].muzV.z * .55);
   setWeapon(0, true);
 }
 function m4Idle() {
@@ -405,7 +408,7 @@ const head = V3(), chest = V3();
 
 function setWeapon(i, force) {
   if (!force && (i === cur || dead)) return;
-  cur = i; reloadT = 0; nextFire = now() + .25; zoomed = false;
+  cur = i; reloadT = 0; nextFire = now() + .25; zoomed = false; drawT = .35; twoHand = false; reloadSnd = 0;
   W.forEach((w, k) => { w.desk.visible = k === i; w.vr.visible = k === i; });
   if (m4.mixer) m4Idle();
   hud();
@@ -473,10 +476,74 @@ const hurt = new THREE.Mesh(new THREE.SphereGeometry(.3, 12, 8), new THREE.MeshB
 hurt.renderOrder = 999; hurt.frustumCulled = false; camera.add(hurt);
 let hurtV = 0;
 
-/* polso sinistro (VR) */
-const wrist = textSprite(256, 128, .0001, .0001); // placeholder per riutilizzare il canvas
-const wristMat = new THREE.MeshBasicMaterial({ map: wrist.t, transparent: true, side: THREE.DoubleSide, fog: false });
-const wristMesh = new THREE.Mesh(new THREE.PlaneGeometry(.16, .08), wristMat); wristMesh.position.set(0, .05, .03); wristMesh.rotation.x = -1.0;
+/* mani (VR) e orologio da polso */
+const wrist = textSprite(256, 256, .0001, .0001);   // il canvas è il quadrante dell'orologio
+function makeHand(side, watch) {
+  const g = new THREE.Group(), fingers = [];
+  const glove = new THREE.MeshStandardMaterial({ color: 0x2b3027, roughness: .9 }), pad = new THREE.MeshStandardMaterial({ color: 0x3d4636, roughness: .95 });
+  const box = (w, h, d, m, x, y, z, parent = g) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); b.frustumCulled = false; parent.add(b); return b; };
+  box(.088, .03, .092, glove, 0, 0, 0); box(.08, .012, .07, pad, 0, -.02, 0);   // palmo e imbottitura
+  box(.074, .052, .07, glove, 0, .002, .088);                                   // polsino
+  [.074, .084, .078, .064].forEach((l, i) => {
+    const p1 = new THREE.Group(); p1.position.set(side * (.031 - i * .0205), 0, -.046); g.add(p1);
+    box(.018, .02, l, glove, 0, 0, -l / 2, p1);
+    const p2 = new THREE.Group(); p2.position.set(0, 0, -l); p1.add(p2); box(.016, .017, l * .8, pad, 0, 0, -l * .4, p2);
+    fingers.push([p1, p2]);
+  });
+  const t1 = new THREE.Group(); t1.position.set(side * .046, -.002, -.012); t1.rotation.y = side * .6; g.add(t1);
+  box(.022, .021, .05, glove, 0, 0, -.025, t1);
+  const t2 = new THREE.Group(); t2.position.set(0, 0, -.05); t1.add(t2); box(.019, .018, .04, pad, 0, 0, -.02, t2);
+  g.userData = { fingers, thumb: [t1, t2], side };
+  if (watch) {
+    box(.082, .056, .05, new THREE.MeshStandardMaterial({ color: 0x15170f, roughness: .6 }), 0, .003, .092);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(.033, .035, .014, 28), new THREE.MeshStandardMaterial({ color: 0x23271f, metalness: .6, roughness: .35 }));
+    body.position.set(0, .036, .092); g.add(body);
+    const face = new THREE.Mesh(new THREE.CircleGeometry(.029, 28), new THREE.MeshBasicMaterial({ map: wrist.t, fog: false }));
+    face.rotation.x = -Math.PI / 2; face.position.set(0, .0445, .092); g.add(face);
+  }
+  return g;
+}
+function curlHand(h, index, grip) {   // dita: indice e resto della mano, da 0 (aperta) a 1 (chiusa)
+  const s = h.userData.side;
+  h.userData.fingers.forEach(([a, b], i) => { const c = i === 0 ? index : grip; a.rotation.x = -c * 1.25; b.rotation.x = -c * 1.45; });
+  const [t1, t2] = h.userData.thumb; t1.rotation.y = s * (.6 - grip * .35); t1.rotation.x = -grip * .5; t2.rotation.x = -grip * .5;
+}
+const handL = makeHand(1, true), handR = makeHand(-1, false);
+handL.visible = false; handR.visible = false; scene.add(handL); vrHolder.add(handR);
+handR.position.set(0, -.03, .035); handR.rotation.x = .55; curlHand(handR, .3, 1);
+function drawWatch() {
+  const g = wrist.g, cx = 128, cy = 128, col = health > 50 ? '#8fbf6a' : health > 25 ? '#f2c230' : '#e0553a';
+  const blink = health <= 25 && ((now() * 3) | 0) % 2 === 0;
+  g.clearRect(0, 0, 256, 256);
+  g.fillStyle = blink ? '#3a0f08' : '#10130e'; g.beginPath(); g.arc(cx, cy, 126, 0, 7); g.fill();
+  g.lineWidth = 16; g.lineCap = 'butt'; g.strokeStyle = '#2e3629'; g.beginPath(); g.arc(cx, cy, 102, 0, 7); g.stroke();
+  g.strokeStyle = col; g.beginPath(); g.arc(cx, cy, 102, -Math.PI / 2, -Math.PI / 2 + health / 100 * Math.PI * 2); g.stroke();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#a2a48f'; g.font = '700 26px "Barlow Condensed", Impact, sans-serif'; g.fillText('SALUTE', cx, cy - 62);
+  g.fillStyle = '#ebe4cf'; g.font = '700 84px "Barlow Condensed", Impact, sans-serif'; g.fillText(String(Math.ceil(health)), cx, cy - 6);
+  g.fillStyle = '#f2c230'; g.font = '500 30px "IBM Plex Mono", monospace'; g.fillText(reloadT > 0 ? '··' : `${ammo[cur]}/${W[cur].mag}`, cx, cy + 56);
+  g.fillStyle = '#a2a48f'; g.font = '700 22px "Barlow Condensed", Impact, sans-serif'; g.fillText(`${score.p} – ${score.b}`, cx, cy + 88);
+  wrist.t.needsUpdate = true;
+}
+
+/* bossoli e numeri di danno */
+const cases = [], CG = new THREE.BoxGeometry(.011, .011, .032), CM = new THREE.MeshStandardMaterial({ color: 0xc89b3c, metalness: .8, roughness: .35 });
+for (let i = 0; i < 16; i++) { const m = new THREE.Mesh(CG, CM); m.visible = false; m.userData = { life: 0, v: V3(), s: V3() }; scene.add(m); cases.push(m); }
+let cIdx = 0;
+function eject(pos, right, up) {
+  const m = cases[cIdx++ % cases.length], u = m.userData;
+  m.position.copy(pos); u.v.copy(right).multiplyScalar(rnd(1.6, 2.6)).addScaledVector(up, rnd(1.2, 2.2)); u.v.x += rnd(-.3, .3); u.v.z += rnd(-.3, .3);
+  u.s.set(rnd(-12, 12), rnd(-12, 12), rnd(-12, 12)); u.life = 2.5; m.visible = true;
+}
+const dnums = [];
+for (let i = 0; i < 8; i++) { const t = textSprite(128, 64, .3, .15); t.s.visible = false; t.life = 0; scene.add(t.s); dnums.push(t); }
+function dmgNum(point, n, color) {
+  const t = dnums.find(q => q.life <= 0); if (!t) return;
+  const g = t.g; g.clearRect(0, 0, 128, 64); g.font = '700 48px "Barlow Condensed", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 7; g.strokeStyle = 'rgba(0,0,0,.75)'; g.strokeText(n, 64, 32); g.fillStyle = color; g.fillText(n, 64, 32); t.t.needsUpdate = true;
+  const d = head.distanceTo(point), k = clamp(d * .07, .15, .9);
+  t.s.scale.set(k * 2, k, 1); t.s.position.copy(point).y += .25; t.s.material.opacity = 1; t.life = .8; t.s.visible = true;
+}
 
 /* ───────── audio ───────── */
 let actx = null;
@@ -588,7 +655,7 @@ function respawnBot() {
 }
 function hitBot(dmg, point, headshot) {
   if (!bot.alive) return;
-  bot.hp -= dmg; bot.flash = .1; puff(point, .3, .15, 0xff5a3a);
+  bot.hp -= dmg; bot.flash = .1; dmgNum(point, Math.round(dmg), headshot ? '#f2c230' : '#ffffff'); puff(point, .3, .15, 0xff5a3a);
   $('hitm').classList.add('on'); setTimeout(() => $('hitm').classList.remove('on'), 90); tick(headshot ? 1900 : 1300);
   if (bot.hp <= 0) {
     bot.alive = false; bot.respT = 3; score.p++; say(headshot ? 'COLPO ALLA TESTA' : 'ELIMINATO', 1.5); hud(); checkWin();
@@ -618,11 +685,11 @@ function respawnPlayer() {
 }
 function startReload() {
   const w = W[cur]; if (reloadT > 0 || ammo[cur] >= w.mag || dead) return;
-  reloadT = w.reload; zoomed = false; tick(500, .12, .08);
+  reloadT = w.reload; zoomed = false; twoHand = false; reloadSnd = 0; tick(500, .12, .08);
   if (cur === 2 && !xr) m4Reload();
 }
-function haptic(i, v, ms) {
-  for (const c of ctrls) if (c.userData.src && c.userData.src.handedness === 'right') {
+function haptic(i, v, ms, side = 'right') {
+  for (const c of ctrls) if (c.userData.src && c.userData.src.handedness === side) {
     const a = c.userData.src.gamepad && c.userData.src.gamepad.hapticActuators; if (a && a[0] && a[0].pulse) a[0].pulse(v, ms);
   }
 }
@@ -654,6 +721,11 @@ function playerShoot() {
   flashLight.position.copy(_m); flashLight.intensity = 5; flashT = .05;
   sfx(w.snd, 1);
   kickV += w.ks; kickP += w.kick * (xr ? 0 : 1);
+  { const f = (twoHand || aimOn) ? .55 : 1; rec.vz += w.ks * 9 * f; rec.vrx += w.kick * 30 * f;
+    const M = xr ? w.vr.matrixWorld : camera.matrixWorld, r = V3().setFromMatrixColumn(M, 0), u = V3().setFromMatrixColumn(M, 1), fw = V3().setFromMatrixColumn(M, 2).negate();
+    const p = V3().setFromMatrixPosition(M);
+    if (xr) p.addScaledVector(u, .03).addScaledVector(fw, -.02); else p.addScaledVector(r, .14).addScaledVector(u, -.12).addScaledVector(fw, .3);
+    setTimeout(() => eject(p, r, u), w.id === 'gm6' ? 450 : 0); }
   if (cur === 2 && !xr) m4Fire();
   if (xr) haptic(0, .7, 45);
   if (ammo[cur] <= 0) setTimeout(startReload, 200);
@@ -667,52 +739,123 @@ function hud() {
   $('hpbar').style.width = health + '%'; $('hpbar').style.background = health > 50 ? 'var(--ok)' : health > 25 ? 'var(--hazard)' : 'var(--danger)';
   $('hpnum').textContent = Math.ceil(health);
   $('wname').textContent = W[cur].name; $('ammo').textContent = reloadT > 0 ? '··' : ammo[cur]; $('ammo').classList.toggle('low', ammo[cur] <= Math.ceil(W[cur].mag * .2));
-  const g = wrist.g; g.clearRect(0, 0, 256, 128); g.fillStyle = 'rgba(16,19,14,.85)'; g.fillRect(0, 0, 256, 128);
-  g.fillStyle = '#f2c230'; g.fillRect(0, 0, 256, 6);
-  g.font = '700 26px "Barlow Condensed", Impact, sans-serif'; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
-  g.fillStyle = '#a2a48f'; g.fillText('SALUTE', 12, 36);
-  g.fillStyle = '#3a4234'; g.fillRect(12, 44, 232, 12);
-  g.fillStyle = health > 50 ? '#8fbf6a' : health > 25 ? '#f2c230' : '#e0553a'; g.fillRect(12, 44, 232 * health / 100, 12);
-  g.fillStyle = '#f2c230'; g.fillText(W[cur].name, 12, 90);
-  g.font = '500 34px "IBM Plex Mono", monospace'; g.fillStyle = '#ebe4cf'; g.textAlign = 'right'; g.fillText(reloadT > 0 ? '··' : String(ammo[cur]), 244, 92);
-  g.font = '700 26px "Barlow Condensed", Impact, sans-serif'; g.textAlign = 'left'; g.fillStyle = '#ebe4cf'; g.fillText(`TU ${score.p}  —  ${score.b} BOT`, 12, 120);
-  wrist.t.needsUpdate = true;
+  drawWatch();
 }
 
 /* ───────── controller VR ───────── */
+let ctrlR = null, ctrlL = null;
 const ctrls = [renderer.xr.getController(0), renderer.xr.getController(1)];
 ctrls.forEach(c => {
   rig.add(c);
   c.addEventListener('connected', e => {
     c.userData.src = e.data; c.userData.prev = [];
-    if (e.data.handedness === 'right') c.add(vrHolder);
-    else if (e.data.handedness === 'left') c.add(wristMesh);
+    if (e.data.handedness === 'right') { c.add(vrHolder); ctrlR = c; handR.visible = true; }
+    else if (e.data.handedness === 'left') { ctrlL = c; handL.visible = true; handL.userData.init = false; }
   });
-  c.addEventListener('disconnected', () => { c.userData.src = null; c.remove(vrHolder); c.remove(wristMesh); });
+  c.addEventListener('disconnected', () => {
+    c.userData.src = null;
+    if (c === ctrlR) { c.remove(vrHolder); ctrlR = null; handR.visible = false; }
+    if (c === ctrlL) { ctrlL = null; handL.visible = false; }
+  });
 });
-let snapCool = 0;
-const _f = V3(), _r = V3();
+let snapCool = 0, twoHand = false, aimOn = false, aimToggle = false, trigR = 0, trigL = 0, sqL = 0;
+const _f = V3(), _r = V3(), _fw = V3();
+function foreWorld(out) { const w = W[cur]; vrHolder.updateMatrixWorld(true); return out.copy(w.fore).applyMatrix4(w.vr.matrixWorld); }
 function pollVR(dt) {
-  snapCool -= dt;
+  snapCool -= dt; let aimHold = false;
   for (const c of ctrls) {
     const src = c.userData.src; if (!src || !src.gamepad) continue;
     const gp = src.gamepad, ax = gp.axes, prev = c.userData.prev || (c.userData.prev = []);
     const sx = ax[2] ?? ax[0] ?? 0, sy = ax[3] ?? ax[1] ?? 0;
     const edge = i => { const p = !!(gp.buttons[i] && gp.buttons[i].pressed); const e = p && !prev[i]; prev[i] = p; return e; };
     const down = i => !!(gp.buttons[i] && gp.buttons[i].pressed);
+    const val = i => (gp.buttons[i] && gp.buttons[i].value) || 0;
     if (src.handedness === 'left') {
       if (Math.abs(sx) > .15 || Math.abs(sy) > .15) {
         camera.getWorldDirection(_f); _f.y = 0; _f.normalize(); _r.set(-_f.z, 0, _f.x);
         rig.position.addScaledVector(_f, -sy * 2.4 * dt).addScaledVector(_r, sx * 2.4 * dt);
       }
+      trigL = val(0); sqL = val(1); aimHold = down(0);          // grilletto sinistro: tieni premuto per mirare
+      const sq = down(1), e = sq && !prev[1]; prev[1] = sq;      // grip sinistro: impugna con due mani
+      if (e && reloadT <= 0 && !dead && ctrlL) { foreWorld(_fw); if (ctrlL.getWorldPosition(_f).distanceTo(_fw) < .4) { twoHand = true; haptic(0, .4, 30, 'left'); } }
+      if (!sq) twoHand = false;
     } else if (src.handedness === 'right') {
       if (Math.abs(sx) > .7 && snapCool <= 0 && !dead) { snapCool = .3; snapTurn(-Math.sign(sx) * Math.PI / 6); }
-      const trig = down(0); const trigEdge = trig && !prev[0]; prev[0] = trig;
+      const trig = down(0); const trigEdge = trig && !prev[0]; prev[0] = trig; trigR = val(0);
       if (trig && (W[cur].auto || trigEdge)) playerShoot();
       if (edge(1) || edge(5)) setWeapon((cur + 1) % W.length);
       if (edge(4)) startReload();
+      if (edge(3)) aimToggle = !aimToggle;                       // click stick destro: mira fissa on/off
     }
   }
+  aimOn = !dead && reloadT <= 0 && (aimHold || aimToggle); zoomed = aimOn;
+}
+const rec = { z: 0, vz: 0, rx: 0, vrx: 0 };
+const qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), qC = new THREE.Quaternion(), qT = new THREE.Quaternion(), qRz = new THREE.Quaternion().setFromAxisAngle(V3(0, 0, 1), Math.PI);
+const mA = new THREE.Matrix4(), pA = V3(), pB = V3(), pC = V3(), pD = V3(), tpV = V3(), ZERO = V3();
+const REL_A = V3(0, -.07, -.03), REL_B = V3(-.03, -.34, .08);
+let drawT = 0, reloadSnd = 0, dotN = 0, dotDist = 20, watchT = 0;
+const aimDot = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0xff2a1a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+aimDot.visible = false; aimDot.renderOrder = 998; scene.add(aimDot);
+const ease = x => x * x * (3 - 2 * x);
+function updateVR(dt) {
+  const w = W[cur]; rig.updateMatrixWorld(true);
+  // molla del rinculo, estrazione dell'arma, respiro e inclinazione in ricarica
+  rec.vz += (-180 * rec.z - 18 * rec.vz) * dt; rec.z += rec.vz * dt;
+  rec.vrx += (-180 * rec.rx - 16 * rec.vrx) * dt; rec.rx += rec.vrx * dt;
+  const rp = reloadT > 0 ? clamp(1 - reloadT / w.reload, 0, 1) : 0, rk = Math.sin(rp * Math.PI);
+  drawT = Math.max(0, drawT - dt); const dip = drawT > 0 ? 1 - ease(1 - drawT / .35) : 0;
+  w.vr.position.set(0, -dip * .28 + Math.sin(now() * 1.7) * .002, rec.z);
+  w.vr.rotation.set(rec.rx - dip * 1.1 - rk * .45, 0, rk * .35);
+  w.laser.visible = !aimOn;
+  // l'arma segue la mano destra; con la mano sinistra sull'impugnatura anteriore (o in mira) si stabilizza
+  if (ctrlR) {
+    ctrlR.getWorldQuaternion(qA); ctrlR.getWorldPosition(pA); qC.copy(qA).invert();
+    tpV.set(0, -.02, .04); qT.identity(); let rate = 30;
+    if (aimOn) {                                   // mira: l'arma sale davanti all'occhio destro, allineata allo sguardo
+      camera.getWorldPosition(pB); camera.getWorldQuaternion(qB);
+      pC.set(.075, -.085, -.34).applyQuaternion(qB).add(pB); tpV.copy(pC); ctrlR.worldToLocal(tpV);
+      qT.copy(qC).multiply(qB); rate = 14;
+    } else if (twoHand && ctrlL) {
+      ctrlL.getWorldPosition(pC); pC.sub(pA).applyQuaternion(qC).normalize();
+      mA.lookAt(ZERO, pC, UP); qT.setFromRotationMatrix(mA); rate = 20;
+    }
+    const k = 1 - Math.exp(-dt * rate); vrHolder.position.lerp(tpV, k); vrHolder.quaternion.slerp(qT, k);
+    vrHolder.updateMatrixWorld(true);
+    curlHand(handR, trigR * .9, 1);
+  }
+  // mano sinistra: libera sul controller, sull'impugnatura anteriore, oppure al caricatore in ricarica
+  if (ctrlL) {
+    ctrlL.getWorldPosition(pB); ctrlL.getWorldQuaternion(qB);
+    let tp = pB, tq = qB, idx = trigL, grip = sqL, rate = 45;
+    if (reloadT > 0 || twoHand || aimOn) {
+      if (reloadT > 0) {
+        const F = w.fore;
+        if (rp < .2) pD.lerpVectors(F, REL_A, ease(rp / .2));
+        else if (rp < .45) pD.lerpVectors(REL_A, REL_B, ease((rp - .2) / .25));
+        else if (rp < .6) pD.copy(REL_B).y += Math.sin(now() * 14) * .004;
+        else if (rp < .8) pD.lerpVectors(REL_B, REL_A, ease((rp - .6) / .2));
+        else pD.lerpVectors(REL_A, F, ease((rp - .8) / .2));
+        grip = .55; idx = .55; rate = 30;
+        if (rp > .2 && reloadSnd < 1) { reloadSnd = 1; tick(260, .25, .07); haptic(0, .5, 40, 'left'); }
+        if (rp > .62 && reloadSnd < 2) { reloadSnd = 2; tick(380, .25, .07); haptic(0, .6, 40, 'left'); }
+        if (rp > .86 && reloadSnd < 3) { reloadSnd = 3; tick(520, .3, .06); haptic(0, .8, 60, 'left'); }
+      } else { pD.copy(w.fore); grip = 1; idx = 1; rate = 24; }
+      w.vr.updateWorldMatrix(true, false); pC.copy(pD).applyMatrix4(w.vr.matrixWorld); tp = pC;
+      w.vr.getWorldQuaternion(qT); qT.multiply(qRz); tq = qT;
+    }
+    if (!handL.userData.init) { handL.position.copy(tp); handL.quaternion.copy(tq); handL.userData.init = true; }
+    else { const k = 1 - Math.exp(-dt * rate); handL.position.lerp(tp, k); handL.quaternion.slerp(tq, k); }
+    curlHand(handL, idx, grip);
+  }
+  if (reloadT <= 0) reloadSnd = 0;
+  // punto rosso di mira
+  if (aimOn) {
+    w.vr.updateWorldMatrix(true, false); pD.copy(w.muzV).applyMatrix4(w.vr.matrixWorld); _fw.set(0, 0, -1).transformDirection(w.vr.matrixWorld);
+    if ((dotN++ & 1) === 0) { ray.set(pD, _fw); ray.far = 120; const h = ray.intersectObjects(bot.alive ? coverMeshes.concat(bot.parts) : coverMeshes, false)[0]; dotDist = h ? h.distance : 60; }
+    aimDot.position.copy(pD).addScaledVector(_fw, dotDist - .03); aimDot.scale.setScalar(clamp(dotDist * .016, .03, 1)); aimDot.visible = true;
+  } else aimDot.visible = false;
+  watchT -= dt; if (watchT <= 0) { watchT = .25; if (health <= 25 || reloadT > 0) drawWatch(); }
 }
 function snapTurn(a) {
   rig.updateMatrixWorld(true); const b = camera.getWorldPosition(V3());
@@ -723,10 +866,10 @@ renderer.xr.addEventListener('sessionstart', () => {
   xr = true; playing = true; $('menu').hidden = true; $('hud').hidden = true;
   vmRoot.visible = false; sun.castShadow = false; camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0); camera.fov = BASE_FOV;
   msg.s.position.set(0, .22, -1.2);
-  rig.position.copy(SPAWN); rig.rotation.set(0, 0, 0); setWeapon(cur, true); hud();
+  rig.position.copy(SPAWN); rig.rotation.set(0, 0, 0); setWeapon(cur, true); handL.userData.init = false; aimToggle = false; hud();
 });
 renderer.xr.addEventListener('sessionend', () => {
-  xr = false; playing = false; vmRoot.visible = true; sun.castShadow = true; camera.position.set(0, EYE, 0); rig.rotation.set(0, 0, 0);
+  xr = false; playing = false; aimOn = false; aimDot.visible = false; vmRoot.visible = true; sun.castShadow = true; camera.position.set(0, EYE, 0); rig.rotation.set(0, 0, 0);
   rig.remove(vrHolder); $('menu').hidden = false;
 });
 
@@ -777,6 +920,13 @@ function update(dt) {
   hurtV = Math.max(0, hurtV - dt * .6); hurt.material.opacity = dead ? .55 : hurtV;
   for (const s of sprites) if (s.userData.life > 0) { s.userData.life -= dt; const k = Math.max(0, s.userData.life / s.userData.max); s.material.opacity = k; s.scale.setScalar(s.userData.size * (1.6 - .6 * k)); if (s.userData.life <= 0) s.visible = false; }
   for (const q of tracers) if (q.userData.life > 0) { q.userData.life -= dt; q.material.opacity = Math.max(0, q.userData.life / .09); if (q.userData.life <= 0) q.visible = false; }
+  for (const m of cases) if (m.userData.life > 0) {
+    const u = m.userData; u.life -= dt; u.v.y -= 9.8 * dt; m.position.addScaledVector(u.v, dt);
+    m.rotation.x += u.s.x * dt; m.rotation.y += u.s.y * dt; m.rotation.z += u.s.z * dt;
+    if (m.position.y < .012) { m.position.y = .012; u.v.y *= -.35; u.v.x *= .6; u.v.z *= .6; u.s.multiplyScalar(.5); }
+    if (u.life <= 0) m.visible = false;
+  }
+  for (const t of dnums) if (t.life > 0) { t.life -= dt; t.s.position.y += dt * .6; t.s.material.opacity = clamp(t.life / .4, 0, 1); if (t.life <= 0) t.s.visible = false; }
   if (flashT > 0) { flashT -= dt; if (flashT <= 0) flashLight.intensity = 0; }
 
   if (playing) {
@@ -822,10 +972,7 @@ function update(dt) {
       if (m4.mode === 'fire') { m4.mixer.update(dt); m4.t -= dt; if (m4.t <= 0) m4Idle(); }
       else if (m4.mode === 'reload') m4.mixer.update(dt);
     }
-  } else {
-    const w = W[cur], k = reloadT > 0 ? Math.sin(clamp(1 - reloadT / w.reload, 0, 1) * Math.PI) : 0;
-    w.vr.rotation.x = -k * .9 + kickV * 1.5; w.vr.position.z = kickV * .5;
-  }
+  } else updateVR(dt);
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), .05);
