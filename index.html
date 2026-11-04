@@ -821,8 +821,11 @@ function updateVR(dt) {
     } else if (twoHand && ctrlL) {
       // due mani: l'impugnatura anteriore (w.fore) deve cadere sulla mano sinistra, quindi la canna
       // punta dove lo decidono entrambe; il rollio è la media delle due mani. Vale anche in mira.
+      // l'arma sta più in basso e più avanti delle mani (meno in mira), così calcio e ottica non coprono la vista
+      const ks = aimOn ? .45 : 1; tpV.set(0, -.02 - .09 * ks, .04 - .08 * ks);
       pH.copy(vrHolder.position).applyQuaternion(qA).add(pA);
-      ctrlL.getWorldPosition(pC); dW.copy(pC).sub(pH);
+      pD.set(0, -.09 * ks, -.08 * ks).applyQuaternion(qA);
+      ctrlL.getWorldPosition(pC).add(pD); dW.copy(pC).sub(pH);
       if (dW.lengthSq() > .0025) {
         dW.normalize(); fN.copy(w.fore).normalize(); qAl.setFromUnitVectors(fN, dW);
         uR.set(0, 1, 0).applyQuaternion(qA); ctrlL.getWorldQuaternion(qB); uL.set(0, 1, 0).applyQuaternion(qB);
