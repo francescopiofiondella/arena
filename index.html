@@ -779,6 +779,7 @@ function pollVR(dt) {
       const sq = down(1), e = sq && !prev[1]; prev[1] = sq;      // grip sinistro: impugna con due mani
       if (e && reloadT <= 0 && !dead && ctrlL) { foreWorld(_fw); if (ctrlL.getWorldPosition(_f).distanceTo(_fw) < .4) { twoHand = true; haptic(0, .4, 30, 'left'); } }
       if (!sq) twoHand = false;
+      if (twoHand && ctrlL) { foreWorld(_fw); if (ctrlL.getWorldPosition(_f).distanceTo(_fw) > .55) twoHand = false; }   // mano troppo lontana: lascia
     } else if (src.handedness === 'right') {
       if (Math.abs(sx) > .7 && snapCool <= 0 && !dead) { snapCool = .3; snapTurn(-Math.sign(sx) * Math.PI / 6); }
       const trig = down(0); const trigEdge = trig && !prev[0]; prev[0] = trig; trigR = val(0);
@@ -793,6 +794,7 @@ function pollVR(dt) {
 const rec = { z: 0, vz: 0, rx: 0, vrx: 0 };
 const qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), qC = new THREE.Quaternion(), qT = new THREE.Quaternion(), qRz = new THREE.Quaternion().setFromAxisAngle(V3(0, 0, 1), Math.PI);
 const mA = new THREE.Matrix4(), pA = V3(), pB = V3(), pC = V3(), pD = V3(), tpV = V3(), ZERO = V3();
+const pH = V3(), dW = V3(), fN = V3(), uR = V3(), uL = V3(), uX = V3(), qAl = new THREE.Quaternion(), qRo = new THREE.Quaternion();
 const REL_A = V3(0, -.07, -.03), REL_B = V3(-.03, -.34, .08);
 let drawT = 0, reloadSnd = 0, dotN = 0, dotDist = 20, watchT = 0;
 const aimDot = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0xff2a1a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
@@ -812,13 +814,25 @@ function updateVR(dt) {
   if (ctrlR) {
     ctrlR.getWorldQuaternion(qA); ctrlR.getWorldPosition(pA); qC.copy(qA).invert();
     tpV.set(0, -.02, .04); qT.identity(); let rate = 30;
-    if (aimOn) {                                   // mira: l'arma sale davanti all'occhio destro, allineata allo sguardo
+    if (aimOn && !(twoHand && ctrlL)) {            // mira a una mano: l'arma sale davanti all'occhio destro, allineata allo sguardo
       camera.getWorldPosition(pB); camera.getWorldQuaternion(qB);
       pC.set(.075, -.085, -.34).applyQuaternion(qB).add(pB); tpV.copy(pC); ctrlR.worldToLocal(tpV);
       qT.copy(qC).multiply(qB); rate = 14;
     } else if (twoHand && ctrlL) {
-      ctrlL.getWorldPosition(pC); pC.sub(pA).applyQuaternion(qC).normalize();
-      mA.lookAt(ZERO, pC, UP); qT.setFromRotationMatrix(mA); rate = 20;
+      // due mani: l'impugnatura anteriore (w.fore) deve cadere sulla mano sinistra, quindi la canna
+      // punta dove lo decidono entrambe; il rollio è la media delle due mani. Vale anche in mira.
+      pH.copy(vrHolder.position).applyQuaternion(qA).add(pA);
+      ctrlL.getWorldPosition(pC); dW.copy(pC).sub(pH);
+      if (dW.lengthSq() > .0025) {
+        dW.normalize(); fN.copy(w.fore).normalize(); qAl.setFromUnitVectors(fN, dW);
+        uR.set(0, 1, 0).applyQuaternion(qA); ctrlL.getWorldQuaternion(qB); uL.set(0, 1, 0).applyQuaternion(qB);
+        uR.add(uL); uR.addScaledVector(dW, -uR.dot(dW));
+        if (uR.lengthSq() > 1e-4) {
+          uR.normalize(); uL.set(0, 1, 0).applyQuaternion(qAl); uL.addScaledVector(dW, -uL.dot(dW)).normalize();
+          qRo.setFromAxisAngle(dW, Math.atan2(dW.dot(uX.crossVectors(uL, uR)), uL.dot(uR))); qAl.premultiply(qRo);
+        }
+        qT.copy(qC).multiply(qAl); rate = 22;
+      }
     }
     const k = 1 - Math.exp(-dt * rate); vrHolder.position.lerp(tpV, k); vrHolder.quaternion.slerp(qT, k);
     vrHolder.updateMatrixWorld(true);
